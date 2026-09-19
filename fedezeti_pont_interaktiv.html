@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+<meta charset="UTF-8">
+<title>Fedezeti pont – interaktív ábra</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --panel-bg: #f7f5f0;
+    --text: #2a2620;
+    --text-muted: #6b6558;
+    --border: #e3ddd0;
+    --accent: #b23b2e;
+    --accent-soft: #e8c9c2;
+    --fixed-color: #8a6d3b;
+    --fixed-fill: #f1e6cf;
+    --variable-color: #3b6e8a;
+    --variable-fill: #d9e8f0;
+    --revenue-color: #2e7d4f;
+    --revenue-fill: #d7ecdf;
+    --profit-fill: #cdeedb;
+    --loss-fill: #f6d9d4;
+    --axis-color: #4a453c;
+    --card-shadow: 0 2px 10px rgba(0,0,0,0.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #1b1a17;
+      --panel-bg: #24221e;
+      --text: #ece7dc;
+      --text-muted: #a39c8c;
+      --border: #3a362e;
+      --accent: #e0685a;
+      --accent-soft: #5c332d;
+      --fixed-color: #d6b56f;
+      --fixed-fill: #3a3220;
+      --variable-color: #7fb6d9;
+      --variable-fill: #1f313c;
+      --revenue-color: #7fd6a0;
+      --revenue-fill: #1c3529;
+      --profit-fill: #1f3d2c;
+      --loss-fill: #402823;
+      --axis-color: #cfc9ba;
+      --card-shadow: 0 2px 14px rgba(0,0,0,0.4);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #1b1a17;
+    --panel-bg: #24221e;
+    --text: #ece7dc;
+    --text-muted: #a39c8c;
+    --border: #3a362e;
+    --accent: #e0685a;
+    --accent-soft: #5c332d;
+    --fixed-color: #d6b56f;
+    --fixed-fill: #3a3220;
+    --variable-color: #7fb6d9;
+    --variable-fill: #1f313c;
+    --revenue-color: #7fd6a0;
+    --revenue-fill: #1c3529;
+    --profit-fill: #1f3d2c;
+    --loss-fill: #402823;
+    --axis-color: #cfc9ba;
+    --card-shadow: 0 2px 14px rgba(0,0,0,0.4);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: Georgia, "Iowan Old Style", "Palatino Linotype", serif;
+    padding: 24px 16px 60px;
+  }
+  .wrap { max-width: 1000px; margin: 0 auto; }
+  h1 {
+    font-size: 1.4rem;
+    margin: 0 0 4px;
+    letter-spacing: 0.01em;
+  }
+  .subtitle {
+    color: var(--text-muted);
+    font-size: 0.95rem;
+    margin: 0 0 20px;
+  }
+  .chart-card {
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 10px 10px 4px;
+    box-shadow: var(--card-shadow);
+    overflow-x: auto;
+  }
+  svg { display: block; width: 100%; height: auto; min-width: 680px; }
+
+  .clickable { cursor: pointer; }
+  .clickable:focus { outline: none; }
+
+  /* Highlight follows the shape itself (its own outline), never a
+     rectangular bounding box — that was the earlier bug. */
+  .region {
+    transition: opacity 0.15s ease, filter 0.15s ease, stroke 0.15s ease;
+    opacity: 0.55;
+    stroke: transparent;
+    stroke-width: 2.5px;
+    stroke-linejoin: round;
+  }
+  .region:hover, .region.active, .region:focus {
+    opacity: 0.9;
+    filter: saturate(1.3);
+    stroke: var(--accent);
+  }
+
+  /* Loss sits ON TOP of the variable-cost region wherever they overlap
+     (see JS ordering) — it needs a much higher default opacity than the
+     other regions, otherwise the blue underneath still shows through
+     and it reads as "still blueish" before you even click anything. */
+  #region-loss { opacity: 0.82; }
+  #region-loss:hover, #region-loss.active, #region-loss:focus { opacity: 0.95; }
+
+  .line-hit { stroke-width: 14; stroke: transparent; fill: none; }
+  .line-visible { fill: none; stroke-width: 3; pointer-events: none; }
+  .line-visible.selected { stroke-width: 5; }
+
+  .pt { transition: r 0.15s ease; }
+  .pt:hover, .pt.active, .pt:focus { r: 10; }
+
+  #region-safety { transition: filter 0.15s ease; }
+  #region-safety.active line,
+  #region-safety:focus line { stroke-width: 3; }
+  #region-safety.active text,
+  #region-safety:focus text { font-weight: bold; }
+
+  .axis { stroke: var(--axis-color); stroke-width: 1.5; }
+  .grid { stroke: var(--axis-color); stroke-opacity: 0.15; stroke-width: 1; }
+  .tick-label { fill: var(--text-muted); font-size: 12px; font-family: Georgia, serif; pointer-events: none; }
+  .dashed { stroke: var(--axis-color); stroke-width: 1.3; stroke-dasharray: 5 4; fill: none; opacity: 0.75; pointer-events: none; }
+
+  .bracket { stroke: var(--axis-color); stroke-width: 1.3; fill: none; pointer-events: none; }
+  .bracket-label {
+    font-size: 13px;
+    fill: var(--text);
+    font-family: Georgia, serif;
+  }
+  .side-label-btn text { pointer-events: none; }
+  .side-label-btn rect { fill: transparent; }
+  .side-label-btn:hover text, .side-label-btn.active text { fill: var(--accent); font-weight: bold; }
+
+  .axis-title { fill: var(--text-muted); font-size: 13px; pointer-events: none; }
+  .no-click { pointer-events: none; }
+
+  .info-panel {
+    margin-top: 16px;
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 20px;
+    box-shadow: var(--card-shadow);
+    min-height: 92px;
+  }
+  .info-title {
+    font-size: 1.05rem;
+    font-weight: bold;
+    color: var(--accent);
+    margin: 0 0 8px;
+  }
+  .info-text {
+    margin: 0;
+    line-height: 1.55;
+    font-size: 0.98rem;
+  }
+  .info-hint {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    margin: 0;
+  }
+  .legend-hint {
+    margin-top: 10px;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+  }
+  .legend-hint span { white-space: nowrap; margin-right: 14px; display: inline-block; }
+  .swatch {
+    display: inline-block;
+    width: 10px; height: 10px;
+    border-radius: 2px;
+    margin-right: 4px;
+    vertical-align: middle;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Fedezeti pont (break-even) – interaktív ábra</h1>
+  <p class="subtitle">Kattints egy vonalra, mezőre vagy jobb oldali címkére a magyarázatért.</p>
+
+  <div class="chart-card">
+    <svg id="chart" viewBox="0 0 960 520" role="img" aria-label="Fedezeti pont diagram">
+
+      <!-- axis title, well above the plot area -->
+      <text class="axis-title no-click" x="20" y="20">Árbevétel és</text>
+      <text class="axis-title no-click" x="20" y="35">költségek (1000 £)</text>
+
+      <!-- gridlines -->
+      <g id="gridlines"></g>
+
+      <!-- regions (drawn first, behind lines).
+           Order matters: "variable" (cost structure) is painted first,
+           then "loss" is painted on top of it wherever they overlap
+           (before break-even, the whole gap between revenue and total
+           cost is a loss — even the part that sits inside the variable
+           cost band), so the red tint is never hidden under the blue. -->
+      <polygon id="region-variable" class="region clickable" data-key="variable"
+        points="70,356 630,356 630,171" fill="var(--variable-fill)" />
+      <polygon id="region-loss" class="region clickable" data-key="loss"
+        points="70,430 294,282 70,356" fill="var(--loss-fill)" />
+      <polygon id="region-profit" class="region clickable" data-key="profit"
+        points="294,282 630,60 630,171" fill="var(--profit-fill)" />
+
+      <!-- dashed helper lines -->
+      <line class="dashed" x1="294" y1="282" x2="294" y2="430"></line>
+      <line class="dashed" x1="518" y1="134" x2="518" y2="430"></line>
+      <line class="dashed" x1="70" y1="282" x2="294" y2="282"></line>
+
+      <!-- safety margin arrow -->
+      <g id="region-safety" class="clickable" data-key="safety">
+        <rect x="294" y="258" width="224" height="26" fill="transparent"/>
+        <line x1="294" y1="282" x2="518" y2="282" stroke="var(--accent)" stroke-width="2" marker-start="url(#arrowStart)" marker-end="url(#arrowEnd)"/>
+        <text x="405" y="276" text-anchor="middle" class="bracket-label no-click" fill="var(--accent)">Biztonsági különbözet</text>
+      </g>
+
+      <defs>
+        <marker id="arrowEnd" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L6,3 L0,6 Z" fill="var(--accent)"/>
+        </marker>
+        <marker id="arrowStart" markerWidth="8" markerHeight="8" refX="0" refY="3" orient="auto">
+          <path d="M6,0 L0,3 L6,6 Z" fill="var(--accent)"/>
+        </marker>
+      </defs>
+
+      <!-- axes -->
+      <line class="axis" x1="70" y1="430" x2="70" y2="45"></line>
+      <line class="axis" x1="70" y1="430" x2="650" y2="430"></line>
+
+      <!-- y ticks -->
+      <g id="yticks"></g>
+      <!-- x ticks -->
+      <g id="xticks"></g>
+
+      <text class="axis-title no-click" x="360" y="480" text-anchor="middle">Kibocsátás (tevékenység szintje)</text>
+
+      <!-- lines (visible, on top of regions) -->
+      <path id="line-fixed-hit" class="clickable line-hit" data-key="fixed" d="M70,356 L630,356"></path>
+      <path id="line-fixed-visible" class="line-visible" d="M70,356 L630,356" stroke="var(--fixed-color)"></path>
+
+      <path id="line-total-hit" class="clickable line-hit" data-key="totalcost" d="M70,356 L630,171"></path>
+      <path id="line-total-visible" class="line-visible" d="M70,356 L630,171" stroke="var(--axis-color)"></path>
+
+      <path id="line-revenue-hit" class="clickable line-hit" data-key="revenue" d="M70,430 L630,60"></path>
+      <path id="line-revenue-visible" class="line-visible" d="M70,430 L630,60" stroke="var(--revenue-color)"></path>
+
+      <!-- break-even point -->
+      <circle id="pt-breakeven" class="pt clickable" data-key="breakeven" cx="294" cy="282" r="7" fill="var(--accent)" stroke="var(--bg)" stroke-width="2"></circle>
+      <text x="150" y="258" class="bracket-label no-click" fill="var(--accent)">Fedezeti pont</text>
+      <text x="150" y="273" class="bracket-label no-click" fill="var(--accent)">200 000 £</text>
+
+      <!-- right-side legend list -->
+      <g id="right-brackets"></g>
+
+    </svg>
+  </div>
+
+  <div class="info-panel">
+    <p id="info-title" class="info-title">Kattints egy elemre</p>
+    <p id="info-text" class="info-text info-hint">Válassz az ábrán: az állandó/változó költség vonalát, az árbevétel vonalát, a fedezeti pontot, a nyereség- vagy veszteségzónát, a biztonsági különbözetet, vagy a jobb oldali címkéket (Árbevétel, Nyereség, Összes költség, Változó költség, Állandó költség).</p>
+  </div>
+
+  <div class="legend-hint">
+    <span><span class="swatch" style="background:var(--fixed-fill)"></span>Állandó költség</span>
+    <span><span class="swatch" style="background:var(--variable-fill)"></span>Változó költség</span>
+    <span><span class="swatch" style="background:var(--profit-fill)"></span>Nyereség zóna</span>
+    <span><span class="swatch" style="background:var(--loss-fill)"></span>Veszteség zóna</span>
+  </div>
+</div>
+
+<script>
+(function() {
+  var svgns = "http://www.w3.org/2000/svg";
+
+  // coordinate mapping: x in [0,125] -> px [70,650]; y in [0,500] -> px [430,60]
+  function xPix(x) { return 70 + x*4.64; }
+  function yPix(y) { return 430 - y*0.74; }
+
+  // --- grid + ticks ---
+  var gridG = document.getElementById('gridlines');
+  var ytickG = document.getElementById('yticks');
+  var xtickG = document.getElementById('xticks');
+
+  var yVals = [0,100,200,300,400,500];
+  yVals.forEach(function(v){
+    var y = yPix(v);
+    var g = document.createElementNS(svgns,'line');
+    g.setAttribute('class','grid');
+    g.setAttribute('x1','70'); g.setAttribute('x2','650');
+    g.setAttribute('y1',y); g.setAttribute('y2',y);
+    gridG.appendChild(g);
+
+    var t = document.createElementNS(svgns,'text');
+    t.setAttribute('class','tick-label');
+    t.setAttribute('x','60'); t.setAttribute('y', y+4);
+    t.setAttribute('text-anchor','end');
+    t.textContent = v;
+    ytickG.appendChild(t);
+  });
+
+  var xVals = [
+    {x:0, pct:null}, {x:25, pct:'20%'}, {x:50, pct:'40%'},
+    {x:75, pct:'60%'}, {x:100, pct:'80%'}, {x:125, pct:'100%'}
+  ];
+  xVals.forEach(function(o){
+    var px = xPix(o.x);
+    var t = document.createElementNS(svgns,'text');
+    t.setAttribute('class','tick-label');
+    t.setAttribute('x',px); t.setAttribute('y','445');
+    t.setAttribute('text-anchor','middle');
+    t.textContent = o.x;
+    xtickG.appendChild(t);
+    if (o.pct) {
+      var t2 = document.createElementNS(svgns,'text');
+      t2.setAttribute('class','tick-label');
+      t2.setAttribute('x',px); t2.setAttribute('y','458');
+      t2.setAttribute('text-anchor','middle');
+      t2.textContent = '('+o.pct+')';
+      xtickG.appendChild(t2);
+    }
+  });
+
+  // --- right side: nested brackets at the REAL line-exit heights,
+  // matching the original textbook figure exactly (not an evenly
+  // spaced list). Two are single boundary points (Árbevétel at the
+  // top, Összes költség where the total-cost line exits the chart);
+  // three are true bracketed ranges (Nyereség, Változó költség,
+  // Állandó költség), each occupying its own exclusive y-span so
+  // nothing can ever overlap.
+  var rb = document.getElementById('right-brackets');
+  var bx = 668;                 // left edge of the bracket column
+  var labelX = 690;             // where label text starts
+
+  var yTop     = yPix(500);     // 60  — Árbevétel exits here
+  var yTotal   = yPix(350);     // 171 — Összes költség exits here
+  var yFixed   = yPix(100);     // 356 — Állandó költség line
+  var yZero    = yPix(0);       // 430 — axis
+
+  var leader = document.createElementNS(svgns,'line');
+  leader.setAttribute('class','bracket');
+  leader.setAttribute('x1', 650); leader.setAttribute('y1', yTop);
+  leader.setAttribute('x2', 650); leader.setAttribute('y2', yZero);
+  rb.appendChild(leader);
+
+  function clickableGroup(key, y1, y2, rectX, rectW) {
+    var g = document.createElementNS(svgns,'g');
+    g.setAttribute('class','side-label-btn clickable');
+    g.setAttribute('data-key', key);
+    var rect = document.createElementNS(svgns,'rect');
+    rect.setAttribute('x', rectX); rect.setAttribute('y', Math.min(y1,y2));
+    rect.setAttribute('width', rectW); rect.setAttribute('height', Math.abs(y2-y1));
+    g.appendChild(rect);
+    rb.appendChild(g);
+    return g;
+  }
+
+  // a short tick + label for a single boundary point (no range)
+  function pointLabel(key, y, label, value) {
+    var g = clickableGroup(key, y-10, y+10, bx-10, 230);
+
+    var tick = document.createElementNS(svgns,'line');
+    tick.setAttribute('class','bracket');
+    tick.setAttribute('x1', 650); tick.setAttribute('y1', y);
+    tick.setAttribute('x2', bx); tick.setAttribute('y2', y);
+    g.insertBefore(tick, g.firstChild);
+
+    var text = document.createElementNS(svgns,'text');
+    text.setAttribute('class','bracket-label');
+    text.setAttribute('x', labelX); text.setAttribute('y', y - 4);
+    text.textContent = label;
+    g.appendChild(text);
+
+    var valText = document.createElementNS(svgns,'text');
+    valText.setAttribute('class','bracket-label');
+    valText.setAttribute('x', labelX); valText.setAttribute('y', y + 13);
+    valText.setAttribute('opacity','0.75'); valText.setAttribute('font-size','12');
+    valText.textContent = value + ' 000 £';
+    g.appendChild(valText);
+  }
+
+  // a square bracket spanning [y1,y2], label centred in the middle
+  function rangeBracket(key, y1, y2, label, value) {
+    var g = clickableGroup(key, y1, y2, bx-4, 230);
+
+    var bracket = document.createElementNS(svgns,'path');
+    bracket.setAttribute('class','bracket');
+    bracket.setAttribute('d',
+      'M'+650+','+y1+' L'+bx+','+y1+' L'+bx+','+y2+' L'+650+','+y2);
+    g.insertBefore(bracket, g.firstChild);
+
+    var mid = (y1+y2)/2;
+    var text = document.createElementNS(svgns,'text');
+    text.setAttribute('class','bracket-label');
+    text.setAttribute('x', labelX); text.setAttribute('y', mid - 4);
+    text.textContent = label;
+    g.appendChild(text);
+
+    var valText = document.createElementNS(svgns,'text');
+    valText.setAttribute('class','bracket-label');
+    valText.setAttribute('x', labelX); valText.setAttribute('y', mid + 15);
+    valText.setAttribute('opacity','0.75'); valText.setAttribute('font-size','12');
+    valText.textContent = value + ' 000 £';
+    g.appendChild(valText);
+  }
+
+  pointLabel('revenue-label',   yTop,   'Árbevétel',      '500');
+  rangeBracket('profit-label',  yTop,   yTotal, 'Nyereség',        '150');
+  pointLabel('totalcost-label', yTotal, 'Összes költség', '350');
+  rangeBracket('variable-label',yTotal, yFixed, 'Változó költség', '250');
+  rangeBracket('fixed-label',   yFixed, yZero,  'Állandó költség', '100');
+
+  // --- explanations ---
+  var info = {
+    fixed: {
+      title: 'Állandó (fix) költség — 100 000 £',
+      text: 'Ez a költség akkor is megvan, ha egyetlen darabot sem gyártasz: bérleti díj, alapfizetések, biztosítás stb. Az ábrán ez a vízszintes vonal 100-nál — nem emelkedik a kibocsátással, végig egyenes marad.'
+    },
+    variable: {
+      title: 'Változó költség',
+      text: 'Az összes költség és az állandó költség közötti különbség — ez a kék sáv, a költség szerkezetét mutatja (nem azt, van-e nyereség). Fedezeti pont előtt ez a sáv átfed a veszteségzónával — ilyenkor a piros színezés van felül, mert az a fontosabb üzenet: még nem térült meg a költség. Teljes kapacitásnál (125 egység) ez 250 000 £ (350 000 − 100 000).'
+    },
+    totalcost: {
+      title: 'Összes költség',
+      text: 'Összes költség = Állandó költség + Változó költség. Ezért indul a vonal 100-ról (ahol a kibocsátás nulla, csak a fix költség van meg), és emelkedik minden egyes legyártott egységgel.'
+    },
+    revenue: {
+      title: 'Árbevétel',
+      text: 'Az eladott mennyiség × egységár. Nullából indul (ha nem adsz el semmit, nincs bevétel), és egyenesen arányosan nő a kibocsátással — ez a legmeredekebb vonal az ábrán, mert az eladási ár egységenként magasabb, mint az önköltség.'
+    },
+    breakeven: {
+      title: 'Fedezeti pont (break-even point) — 200 000 £',
+      text: 'Itt egyenlő az árbevétel az összes költséggel: 50 egységnél (a kapacitás 40%-ánál). Eddig a pontig a cég vagy veszteséges, vagy épphogy nullszaldós — ez után minden eladott darab már valódi nyereséget termel, mert a fix költséget nem kell újra kifizetni.'
+    },
+    profit: {
+      title: 'Nyereség zóna',
+      text: 'A fedezeti ponton túl az árbevétel vonala a költség vonal fölé kerül — ez a zöld terület. A kettő közti távolság a nyereség: 125 egységnél (teljes kapacitás) ez 500 000 − 350 000 = 150 000 £.'
+    },
+    loss: {
+      title: 'Veszteség zóna',
+      text: 'A fedezeti pont előtt a költségek meghaladják a bevételt (piros terület) — egészen 50 egységig, a teljes rés az árbevétel és az összes költség vonala között. Ez a sáv 25 egységtől kezdve átnyúlik a kék "változó költség" sávba is — hiába fedezi már a bevétel az állandó költséget, a teljes költséget (állandó + változó) még nem, tehát még mindig veszteséges a működés.'
+    },
+    safety: {
+      title: 'Biztonsági különbözet',
+      text: 'A fedezeti pont (50 egység) és a tényleges vagy tervezett kibocsátás (itt: 100 egység) közötti távolság. Megmutatja, mekkora visszaesést bírna el a cég forgalomban anélkül, hogy veszteségessé válna — minél nagyobb ez a sáv, annál biztonságosabb a helyzet.'
+    },
+    'fixed-label': {
+      title: 'Állandó költség (teljes kapacitásnál is) — 100 000 £',
+      text: 'A jobb oldali lista alsó tétele: a fix költség független a kibocsátástól, ezért ugyanaz az érték jelenik meg itt is, mint a vízszintes vonalnál.'
+    },
+    'variable-label': {
+      title: 'Változó költség (teljes kapacitásnál) — 250 000 £',
+      text: 'Teljes kapacitáson (125 egység) a változó költség 250 000 £ — ennyivel nő az összes költség a fix költséghez képest, amikor a legtöbbet termeljük.'
+    },
+    'totalcost-label': {
+      title: 'Összes költség (teljes kapacitásnál) — 350 000 £',
+      text: 'Állandó (100 000) + Változó (250 000) = 350 000 £. Ez az összes költség maximális kibocsátásnál.'
+    },
+    'profit-label': {
+      title: 'Nyereség (teljes kapacitásnál) — 150 000 £',
+      text: 'Árbevétel (500 000) − Összes költség (350 000) = 150 000 £. Ez a maximális nyereség, ha a cég a teljes kapacitását kihasználja.'
+    },
+    'revenue-label': {
+      title: 'Árbevétel (teljes kapacitásnál) — 500 000 £',
+      text: 'Ha a cég a teljes kapacitását (125 egység, 100%) kihasználja és mindent el is ad, ennyi bevételt termel összesen.'
+    }
+  };
+
+  var titleEl = document.getElementById('info-title');
+  var textEl = document.getElementById('info-text');
+
+  function clearActive() {
+    document.querySelectorAll('.active').forEach(function(el){ el.classList.remove('active'); });
+    document.querySelectorAll('.line-visible.selected').forEach(function(el){ el.classList.remove('selected'); });
+  }
+
+  function selectKey(key, el) {
+    clearActive();
+    var data = info[key];
+    if (!data) return;
+    titleEl.textContent = data.title;
+    textEl.textContent = data.text;
+    textEl.classList.remove('info-hint');
+
+    if (el) el.classList.add('active');
+    var visibleMap = { fixed:'line-fixed-visible', totalcost:'line-total-visible', revenue:'line-revenue-visible' };
+    if (visibleMap[key]) {
+      document.getElementById(visibleMap[key]).classList.add('selected');
+    }
+    if (key === 'breakeven') {
+      document.getElementById('pt-breakeven').classList.add('active');
+    }
+  }
+
+  document.querySelectorAll('.clickable').forEach(function(el){
+    el.setAttribute('tabindex','0');
+    el.addEventListener('click', function(){
+      selectKey(el.getAttribute('data-key'), el);
+    });
+    el.addEventListener('keypress', function(e){
+      if (e.key === 'Enter' || e.key === ' ') selectKey(el.getAttribute('data-key'), el);
+    });
+  });
+})();
+</script>
+</body>
+</html>
